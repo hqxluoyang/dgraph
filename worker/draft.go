@@ -30,6 +30,7 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/net/trace"
 
+	"github.com/dgraph-io/badger/y"
 	"github.com/dgraph-io/dgraph/conn"
 	"github.com/dgraph-io/dgraph/posting"
 	"github.com/dgraph-io/dgraph/protos/api"
@@ -458,6 +459,10 @@ func (n *node) Run() {
 	rcBytes, err := n.RaftContext.Marshal()
 	x.Check(err)
 
+	// Ensure we don't exit unless any snapshot in progress in done.
+	closer := y.NewCloser(1)
+	go n.snapshotPeriodically(closer)
+
 	for {
 		select {
 		case <-ticker.C:
@@ -557,10 +562,12 @@ func (n *node) Run() {
 						}
 					}
 					n.Raft().Stop()
+					closer.SignalAndWait()
 					close(n.done)
 				}()
 			} else {
 				n.Raft().Stop()
+				closer.SignalAndWait()
 				close(n.done)
 			}
 		case <-n.done:
@@ -579,14 +586,7 @@ func (n *node) Stop() {
 	<-n.done // wait for Run to respond.
 }
 
-func (n *node) snapshotPeriodically() {
-	if n.gid == 0 {
-		// Group zero is dedicated for membership information, whose state we don't persist.
-		// So, taking snapshots would end up deleting the RAFT entries that we need to
-		// regenerate the state on a crash. Therefore, don't take snapshots.
-		return
-	}
-
+func (n *node) snapshotPeriodically(closer *y.Closer) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
@@ -595,19 +595,14 @@ func (n *node) snapshotPeriodically() {
 		case <-ticker.C:
 			n.snapshot(Config.MaxPendingCount)
 
-		case <-n.done:
+		case <-closer.HasBeenClosed():
+			closer.Done()
 			return
 		}
 	}
 }
 
 func (n *node) snapshot(skip uint64) {
-	if n.gid == 0 {
-		// Group zero is dedicated for membership information, whose state we don't persist.
-		// So, taking snapshots would end up deleting the RAFT entries that we need to
-		// regenerate the state on a crash. Therefore, don't take snapshots.
-		return
-	}
 	water := posting.TxnMarks()
 	le := water.DoneUntil()
 
@@ -693,7 +688,6 @@ func (n *node) InitAndStartNode(wal *raftwal.Wal) {
 	}
 	go n.processApplyCh()
 	go n.Run()
-	go n.snapshotPeriodically()
 	go n.BatchAndSendMessages()
 }
 
