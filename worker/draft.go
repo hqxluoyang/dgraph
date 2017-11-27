@@ -662,9 +662,11 @@ func (n *node) InitAndStartNode(wal *raftwal.Wal) {
 		x.Printf("Restarting node for group: %d\n", n.gid)
 		sp, err := n.Store.Snapshot()
 		x.Checkf(err, "Unable to get existing snapshot")
-		var peerMap map[uint64]string
-		x.Check(json.Unmarshal(sp.Data, &peerMap))
-		n.SetPeerMap(peerMap)
+		if !raft.IsEmptySnap(sp) {
+			var peerMap map[uint64]string
+			x.Check(json.Unmarshal(sp.Data, &peerMap))
+			n.SetPeerMap(peerMap)
+		}
 
 		found := groups().HasMeInState()
 		_, hasPeer := groups().MyPeer()

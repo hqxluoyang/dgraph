@@ -365,12 +365,14 @@ func (n *node) initAndStartNode(wal *raftwal.Wal) error {
 	if restart {
 		x.Println("Restarting node for dgraphzero")
 		sp, err := n.Store.Snapshot()
-		var sd snapshotData
-		x.Check(json.Unmarshal(sp.Data, &sd))
-		n.server.SetMembershipState(sd.state)
-		n.SetPeerMap(sd.peers)
-
 		x.Checkf(err, "Unable to get existing snapshot")
+		if !raft.IsEmptySnap(sp) {
+			var sd snapshotData
+			x.Check(json.Unmarshal(sp.Data, &sd))
+			n.server.SetMembershipState(sd.state)
+			n.SetPeerMap(sd.peers)
+		}
+
 		n.SetRaft(raft.RestartNode(n.Cfg))
 
 	} else if len(opts.peer) > 0 {
