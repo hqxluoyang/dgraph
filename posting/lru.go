@@ -144,10 +144,11 @@ func (c *listCache) removeOldest() {
 			delete(c.cache, e.key)
 		}
 
+		prev := ele.Prev()
 		c.ll.Remove(ele)
 		c.evicts++
 		c.curSize -= e.size
-		ele = c.ll.Back()
+		ele = prev
 	}
 }
 
