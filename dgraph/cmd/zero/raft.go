@@ -19,6 +19,7 @@ package zero
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"math/rand"
 	"sync"
@@ -364,9 +365,10 @@ func (n *node) initAndStartNode(wal *raftwal.Wal) error {
 	if restart {
 		x.Println("Restarting node for dgraphzero")
 		sp, err := n.Store.Snapshot()
-		var state intern.MembershipState
-		x.Check(state.Unmarshal(sp.Data))
-		n.server.SetMembershipState(&state)
+		var sd snapshotData
+		x.Check(json.Unmarshal(sp.Data, &sd))
+		n.server.SetMembershipState(sd.state)
+		n.SetPeerMap(sd.peers)
 
 		x.Checkf(err, "Unable to get existing snapshot")
 		n.SetRaft(raft.RestartNode(n.Cfg))
@@ -402,6 +404,11 @@ func (n *node) initAndStartNode(wal *raftwal.Wal) error {
 	return err
 }
 
+type snapshotData struct {
+	state *intern.MembershipState
+	peers map[uint64]string
+}
+
 func (n *node) trySnapshot() {
 	existing, err := n.Store.Snapshot()
 	x.Checkf(err, "Unable to get existing snapshot")
@@ -411,7 +418,11 @@ func (n *node) trySnapshot() {
 		return
 	}
 
-	data, err := n.server.MarshalMembershipState()
+	sd := &snapshotData{
+		state: n.server.membershipState(),
+		peers: n.PeerMap(),
+	}
+	data, err := json.Marshal(sd)
 	x.Check(err)
 
 	if tr, ok := trace.FromContext(n.ctx); ok {
