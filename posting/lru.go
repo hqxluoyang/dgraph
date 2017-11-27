@@ -147,7 +147,7 @@ func (c *listCache) removeOldest() {
 		c.ll.Remove(ele)
 		c.evicts++
 		c.curSize -= e.size
-		ele = ele.Prev()
+		ele = c.ll.Back()
 	}
 }
 
