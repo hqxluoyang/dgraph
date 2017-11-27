@@ -405,17 +405,20 @@ func (n *node) processKeyValues(index uint64, pid uint32, kvs []*intern.KV) erro
 }
 
 func (n *node) applyAllMarks(ctx context.Context) {
-	// Get index of last committed.
 	lastIndex, err := n.Store.LastIndex()
 	x.Checkf(err, "Error while getting last index")
-	n.Applied.WaitForMark(ctx, lastIndex)
-}
-
-func (n *node) waitForTxnMarks(ctx context.Context) {
-	// Get index of last committed.
-	lastIndex, err := n.Store.LastIndex()
-	x.Checkf(err, "Error while getting last index")
-	posting.TxnMarks().WaitForMark(ctx, lastIndex)
+	for n.Applied.WaitingFor() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		doneUntil := n.Applied.DoneUntil() // applied until.
+		if doneUntil >= lastIndex {
+			break // Do the check before sleep.
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (n *node) retrieveSnapshot(peerID uint64) {

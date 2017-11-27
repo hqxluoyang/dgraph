@@ -64,10 +64,11 @@ type mark struct {
 // An index may also become "done" by calling SetDoneUntil at a time such that it is not
 // inter-mingled with Begin/Done calls.
 type WaterMark struct {
-	Name      string
-	markCh    chan mark
-	doneUntil uint64
-	elog      trace.EventLog
+	Name       string
+	markCh     chan mark
+	doneUntil  uint64
+	elog       trace.EventLog
+	waitingFor uint32 // Are we waiting for some index?
 }
 
 // Init initializes a WaterMark struct. MUST be called before using it.
@@ -98,6 +99,11 @@ func (w *WaterMark) DoneUntil() uint64 {
 
 func (w *WaterMark) SetDoneUntil(val uint64) {
 	atomic.StoreUint64(&w.doneUntil, val)
+}
+
+// WaitingFor returns whether we are waiting for a task to be done.
+func (w *WaterMark) WaitingFor() bool {
+	return atomic.LoadUint32(&w.waitingFor) != 0
 }
 
 func (w *WaterMark) WaitForMark(ctx context.Context, index uint64) error {
@@ -136,6 +142,8 @@ func (w *WaterMark) process() {
 		prev, present := pending[index]
 		if !present {
 			heap.Push(&indices, index)
+			// indices now nonempty, update waitingFor.
+			atomic.StoreUint32(&w.waitingFor, 1)
 		}
 
 		delta := 1
@@ -158,10 +166,12 @@ func (w *WaterMark) process() {
 
 		until := doneUntil
 		loops := 0
+		var doWait bool
 
 		for len(indices) > 0 {
 			min := indices[0]
 			if done := pending[min]; done != 0 {
+				doWait = true
 				break // len(indices) will be > 0.
 			}
 			heap.Pop(&indices)
@@ -174,6 +184,9 @@ func (w *WaterMark) process() {
 			for _, ch := range toNotify {
 				close(ch)
 			}
+		}
+		if !doWait {
+			atomic.StoreUint32(&w.waitingFor, 0)
 		}
 		if until != doneUntil {
 			AssertTrue(atomic.CompareAndSwapUint64(&w.doneUntil, doneUntil, until))
